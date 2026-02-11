@@ -4,7 +4,7 @@ from openai import OpenAI
 client=OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 def requirement_parser_tool(text):
-r=client.chat.completions.create(model="gpt-4.1-mini",messages=[{"role":"user","content":f"Extract the main requirement clearly:\n{text}"}])
+r=client.chat.completions.create(model="gpt-4.1-mini",messages=[{"role":"user","content":f"Extract the core requirement clearly:\n{text}"}])
 return r.choices[0].message.content.strip()
 
 def test_case_generator_tool(text):
