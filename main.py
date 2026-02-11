@@ -1,87 +1,95 @@
+import json
 from datetime import datetime
 from dotenv import load_dotenv
-from langgraph.graph import StateGraph,END
+from openai import OpenAI
 from tools import requirement_parser_tool,test_case_generator_tool,formatter_tool
 
 load_dotenv()
+client=OpenAI()
 
 def log_to_file(text):
 with open("log.txt","a",encoding="utf-8") as f:
 f.write(f"\n[{datetime.now()}]\n{text}\n")
 
-class State(dict):
-pass
+tools=[
+{
+"type":"function",
+"function":{
+"name":"requirement_parser_tool",
+"description":"Extracts the core requirement from user input",
+"parameters":{
+"type":"object",
+"properties":{"text":{"type":"string"}},
+"required":["text"]
+}
+}
+},
+{
+"type":"function",
+"function":{
+"name":"test_case_generator_tool",
+"description":"Generates test cases from a parsed requirement",
+"parameters":{
+"type":"object",
+"properties":{"text":{"type":"string"}},
+"required":["text"]
+}
+}
+},
+{
+"type":"function",
+"function":{
+"name":"formatter_tool",
+"description":"Formats test cases cleanly",
+"parameters":{
+"type":"object",
+"properties":{"text":{"type":"string"}},
+"required":["text"]
+}
+}
+}
+]
 
-def think(state):
-if "parsed" not in state:
-t="I need to understand the requirement."
-state["next"]="parse"
-elif "cases" not in state:
-t="Now I should generate test cases."
-state["next"]="generate"
-elif "final" not in state:
-t="I should format the test cases."
-state["next"]="format"
+tool_map={
+"requirement_parser_tool":requirement_parser_tool,
+"test_case_generator_tool":test_case_generator_tool,
+"formatter_tool":formatter_tool
+}
+
+system_prompt="""
+You are a ReAct agent. You must think step by step and decide which tool to call.
+First understand the input. Then call tools one by one until final test cases are ready.
+Always finish by returning only formatted test cases.
+"""
+
+def run_agent(user_input):
+messages=[
+{"role":"system","content":system_prompt},
+{"role":"user","content":user_input}
+]
+
+log_to_file("Input: "+user_input)
+
+while True:
+r=client.chat.completions.create(model="gpt-4.1-mini",messages=messages,tools=tools)
+m=r.choices[0].message
+
+if m.tool_calls:
+for call in m.tool_calls:
+name=call.function.name
+args=json.loads(call.function.arguments)
+print("Action: Call",name)
+log_to_file("Action: Call "+name)
+result=tool_map[name](**args)
+print("Observation:",result)
+log_to_file("Observation: "+result)
+messages.append(m)
+messages.append({"role":"tool","tool_call_id":call.id,"content":result})
 else:
-state["next"]="end"
-return state
-print("\nThought:",t)
-log_to_file("Thought: "+t)
-return state
-
-def parse(state):
-print("Action: Call Requirement Parser Tool")
-log_to_file("Action: Call Requirement Parser Tool")
-r=requirement_parser_tool(state["input"])
-print("Observation:",r)
-log_to_file("Observation: "+r)
-state["parsed"]=r
-return state
-
-def generate(state):
-print("Action: Call Test Case Generator Tool")
-log_to_file("Action: Call Test Case Generator Tool")
-r=test_case_generator_tool(state["parsed"])
-print("Observation:",r)
-log_to_file("Observation: "+r)
-state["cases"]=r
-return state
-
-def format_output(state):
-print("Action: Call Formatter Tool")
-log_to_file("Action: Call Formatter Tool")
-r=formatter_tool(state["cases"])
-print("\nFinal Answer:\n"+r)
-log_to_file("Final Answer:\n"+r)
-state["final"]=r
-return state
-
-def router(state):
-return state["next"]
-
-g=StateGraph(State)
-g.add_node("think",think)
-g.add_node("parse",parse)
-g.add_node("generate",generate)
-g.add_node("format",format_output)
-
-g.set_entry_point("think")
-
-g.add_conditional_edges("think",router,{
-"parse":"parse",
-"generate":"generate",
-"format":"format",
-"end":END
-})
-
-g.add_edge("parse","think")
-g.add_edge("generate","think")
-g.add_edge("format","think")
-
-app=g.compile()
+print("\nFinal Answer:\n"+m.content)
+log_to_file("Final Answer:\n"+m.content)
+break
 
 if __name__=="__main__":
 user_input=input("Enter requirement: ")
-print("\nInput:",user_input)
-log_to_file("Input: "+user_input)
-app.invoke({"input":user_input})
+run_agent(user_input)
